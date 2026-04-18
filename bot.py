@@ -25,5 +25,40 @@ def planos_keyboard():
 # ---------- Handlers ----------
 @dp.message(CommandStart())
 async def on_user_start(message: types.Message):
-    # Link raw da imagem no GitHub
-    imagem_url = "https://raw.githubusercontent.com/guilherme-reis-dev/img/main/WhatsApp%20Image%202026-04-09%20
+    # Link da imagem no GitHub (repositório público)
+    imagem_url = "https://github.com/guilherme-reis-dev/iamgem/raw/main/WhatsApp%20Image%202026-04-09%20at%2017.10.11.jpeg"
+
+    legenda = """𝐀 𝐑𝐀𝐁𝐔𝐃𝐀 𝐌𝐀𝐈𝐒 𝐆𝐎𝐒𝐓𝐎𝐒𝐀 𝐃𝐎 𝐏𝐑𝐈𝐕𝐀𝐂𝐘 🍑
+Conteúdo que não fica público no meu 𝗣𝗥𝗜𝗩𝗔𝗖𝗬‼
+
+😈 Aqui eu mostro o que não pode subir em rede social
+💭 Se tua ex ainda te persegue na mente, eu cuido disso
+🔥 Conteúdos frequentes pr te manter preso
+🎥 Sorteios semanais de chamadas privadas
+🔒 Só pra quem tá dentro
+
+⚠️ 𝗩𝗼𝗰ê 𝗷𝗮́ 𝗰𝗵𝗲𝗴𝗼𝘂 𝗮𝘁𝗲́ 𝗮𝗾𝘂𝗶
+Agora decide se entra...
+ou continua só imaginando 👀👇
+"""
+
+    await bot.send_photo(
+        chat_id=message.chat.id,
+        photo=imagem_url,
+        caption=legenda,
+        reply_markup=planos_keyboard()
+    )
+
+@dp.message()
+async def fallback(message: types.Message):
+    text = "Quer ver o conteúdo exclusivo? Escolha um plano abaixo."
+    await message.answer(text, reply_markup=planos_keyboard())
+
+# ---------- Inicialização ----------
+async def main():
+    print("Bot iniciado. Rodando em polling...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
