@@ -1,36 +1,37 @@
 import os
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
-from database import SessionLocal, usuarios, init_db
-from dotenv import load_dotenv
+import psycopg2
+import telebot
 
-load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+# Pega variáveis de ambiente do Railway
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Olá! 👋 Eu sou seu bot conectado ao Railway!")
+bot = telebot.TeleBot(BOT_TOKEN)
 
-async def registrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    nome = " ".join(context.args)
-    if not nome:
-        await update.message.reply_text("Use /registrar <seu_nome>")
-        return
+# Conexão com Postgres
+conn = psycopg2.connect(DATABASE_URL)
+cursor = conn.cursor()
 
-    db = SessionLocal()
-    db.execute(usuarios.insert().values(nome=nome, telegram_id=str(update.effective_user.id)))
-    db.commit()
-    db.close()
+# Cria tabela se não existir
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS usuarios (
+    id BIGINT PRIMARY KEY,
+    nome TEXT,
+    role TEXT DEFAULT 'cliente'
+)
+""")
+conn.commit()
 
-    await update.message.reply_text(f"Usuário {nome} registrado com sucesso!")
+# Handler do /start → registra automaticamente
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    nome = message.from_user.first_name
 
-def main():
-    init_db()
-    app = Application.builder().token(TOKEN).build()
+    cursor.execute(
+        "INSERT INTO usuarios (id, nome) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (user_id, nome)
+    )
+    conn.commit()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("registrar", registrar))
-
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+    bot.reply_to
