@@ -117,6 +117,8 @@ def listar_usuarios(message):
     bot.reply_to(message, texto, parse_mode="Markdown")
 
 init_db()
+print("Aguardando instância anterior encerrar...")
+time.sleep(15)
 print("Bot rodando...")
 while True:
     try:
