@@ -1,97 +1,128 @@
-import asyncio
-import logging
-from bot import dp, bot, init_db_pool, close_db_pool, logger
-from admin_handlers import admin_router
+import os
+import time
+import psycopg2
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-async def init_db_tables():
-    """Cria tabelas se não existirem usando asyncpg puro (antes do aiogram subir)"""
-    import asyncpg
-    import os
-    db_url = os.getenv("DATABASE_URL")
-    
-    if not db_url:
-        logger.error("DATABASE_URL não configurada.")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+FOTO = "https://raw.githubusercontent.com/guilherme-reis-dev/TELEGRAM-BOT/74bb3a0f047937f4dac34cc1aec6c77930d1f221/WhatsApp%20Image%202026-04-09%20at%2017.10.11.jpeg"
+
+TEXTO = """A RABUDA MAIS GOSTOSA DO PRIVACY 🍑
+Conteúdo que não fica público no meu PRIVACY‼️
+
+😈 Aqui eu mostro o que não pode subir em rede social
+💨 Se tua ex ainda te persegue na mente, eu cuido disso
+🔥 Conteúdos frequentes pr te manter preso
+🎰 Sorteios semanais de chamadas privadas
+🔒 Só pra quem tá dentro
+
+⚠️ Você já chegou até aqui
+Agora decide se entra...
+ou continua só imaginando 👀👇"""
+
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
+
+def init_db():
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT UNIQUE,
+            username TEXT,
+            first_name TEXT,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            role TEXT DEFAULT 'cliente'
+        )
+    """)
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def is_admin(user_id):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT role FROM usuarios WHERE user_id = %s", (user_id,))
+    result = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    return result and result[0] == 'admin'
+
+def menu_assinatura():
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("💎 Semanal — R$15", url="https://app.syncpayments.com.br/payment-link/a1812a47-4898-4a90-a968-431ce3df4ab7"))
+    markup.add(InlineKeyboardButton("💎 6 meses — R$30", url="https://app.syncpayments.com.br/payment-link/a1812b53-a810-44d8-8df6-ff0326c06227"))
+    markup.add(InlineKeyboardButton("💎 Anual — R$50", url="https://app.syncpayments.com.br/payment-link/a1812bc7-d076-4b49-ab75-6ec1b3148844"))
+    return markup
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    first_name = message.from_user.first_name
+    username = message.from_user.username
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO usuarios (user_id, first_name, username)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (user_id) DO NOTHING
+    """, (user_id, first_name, username))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    bot.send_photo(
+        message.chat.id,
+        photo=FOTO,
+        caption=TEXTO,
+        reply_markup=menu_assinatura()
+    )
+
+@bot.message_handler(commands=['assinar'])
+def assinar(message):
+    bot.send_photo(
+        message.chat.id,
+        photo=FOTO,
+        caption=TEXTO,
+        reply_markup=menu_assinatura()
+    )
+
+@bot.message_handler(commands=['admin'])
+def admin(message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.reply_to(message, "❌ Você não tem permissão de admin.")
         return
+    bot.reply_to(message, "✅ Painel Admin\n\nComandos disponíveis:\n/usuarios - Ver todos os usuários")
 
-    conn = await asyncpg.connect(db_url)
+@bot.message_handler(commands=['usuarios'])
+def listar_usuarios(message):
+    user_id = message.from_user.id
+    if not is_admin(user_id):
+        bot.reply_to(message, "❌ Acesso negado.")
+        return
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, first_name, role FROM usuarios")
+    rows = cursor.fetchall()
+    cursor.close()
+    conn.close()
+    texto = "👥 *Usuários cadastrados:*\n\n"
+    for row in rows:
+        texto += f"• {row[1]} (ID: {row[0]}) - {row[2]}\n"
+    bot.reply_to(message, texto, parse_mode="Markdown")
+
+init_db()
+print("Aguardando instância anterior encerrar...")
+time.sleep(15)
+print("Bot rodando...")
+while True:
     try:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS usuarios (
-                id BIGINT PRIMARY KEY,
-                nome TEXT NOT NULL,
-                telegram_id TEXT UNIQUE NOT NULL,
-                role TEXT DEFAULT 'cliente',
-                plano TEXT DEFAULT NULL,
-                data_inscricao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE INDEX IF NOT EXISTS idx_usuarios_telegram_id ON usuarios(telegram_id);
-            CREATE INDEX IF NOT EXISTS idx_usuarios_role ON usuarios(role);
-        """)
-        logger.info("✅ Tabela 'usuarios' verificada/criada com sucesso (completa)")
+        bot.infinity_polling(skip_pending=True, timeout=10, long_polling_timeout=5)
     except Exception as e:
-        logger.error(f"❌ Erro ao criar tabela: {e}")
-    finally:
-        await conn.close()
-
-
-
-async def register_user(user_id: int, nome: str):
-    """Registra novo usuário no banco de dados"""
-    try:
-        from bot import get_db_pool
-        
-        pool = get_db_pool()
-        if not pool:
-            await init_db_pool()
-            pool = get_db_pool()
-        
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO usuarios (id, nome, telegram_id) 
-                VALUES ($1, $2, $3) 
-                ON CONFLICT (id) DO NOTHING
-                """,
-                user_id, nome, str(user_id)
-            )
-        logger.info(f"✅ Usuário {user_id} ({nome}) registrado")
-    except Exception as e:
-        logger.error(f"❌ Erro ao registrar usuário {user_id}: {e}")
-
-async def on_startup():
-    """Inicializa a aplicação"""
-    logger.info("🚀 Iniciando bot...")
-    await init_db_pool()
-    await init_db_tables()
-
-async def on_shutdown():
-    """Desliga a aplicação"""
-    logger.info("🛑 Desligando bot...")
-    await close_db_pool()
-
-async def main():
-    """Função principal"""
-    from aiogram import types
-    from aiogram.filters import Command
-    
-    # Registrar handlers
-    @dp.message(Command("start"))
-    async def cmd_start(message: types.Message):
-        """Handler do comando /start"""
-        await register_user(message.from_user.id, message.from_user.first_name or "Usuário")
-        await message.reply(f"👋 Bem-vindo, {message.from_user.first_name}!\n\nVocê foi registrado com sucesso!")
-        
-    dp.include_router(admin_router)
-    
-    try:
-        await on_startup()
-        logger.info("✅ Bot iniciado com sucesso!")
-        await dp.start_polling(bot, allowed_updates=['message', 'callback_query'])
-    except KeyboardInterrupt:
-        logger.info("⚠️ Bot interrompido pelo usuário")
-    finally:
-        await on_shutdown()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        print(f"Erro: {e}")
+        time.sleep(5)
