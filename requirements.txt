@@ -1,6 +1,11 @@
-python-telegram-bot==20.3
-psycopg2-binary==2.9.9
+# Framework Telegram
+aiogram==3.4.1
+
+# Banco de Dados
+asyncpg==0.29.0
 SQLAlchemy==2.0.29
+
+# Utilitários
 python-dotenv==1.0.1
-pyTelegramBotAPI
+
 
