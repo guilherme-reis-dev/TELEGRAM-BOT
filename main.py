@@ -2,7 +2,37 @@ import asyncio
 import logging
 from bot import dp, bot, init_db_pool, close_db_pool, logger
 from admin_handlers import admin_router
-from utils import create_tables
+
+async def init_db_tables():
+    """Cria tabelas se não existirem usando asyncpg puro (antes do aiogram subir)"""
+    import asyncpg
+    import os
+    db_url = os.getenv("DATABASE_URL")
+    
+    if not db_url:
+        logger.error("DATABASE_URL não configurada.")
+        return
+
+    conn = await asyncpg.connect(db_url)
+    try:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS usuarios (
+                id BIGINT PRIMARY KEY,
+                nome TEXT NOT NULL,
+                telegram_id TEXT UNIQUE NOT NULL,
+                role TEXT DEFAULT 'cliente',
+                plano TEXT DEFAULT NULL,
+                data_inscricao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                atualizado_em TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_usuarios_telegram_id ON usuarios(telegram_id);
+            CREATE INDEX IF NOT EXISTS idx_usuarios_role ON usuarios(role);
+        """)
+        logger.info("✅ Tabela 'usuarios' verificada/criada com sucesso (completa)")
+    except Exception as e:
+        logger.error(f"❌ Erro ao criar tabela: {e}")
+    finally:
+        await conn.close()
 
 
 
@@ -33,7 +63,7 @@ async def on_startup():
     """Inicializa a aplicação"""
     logger.info("🚀 Iniciando bot...")
     await init_db_pool()
-    await create_tables()
+    await init_db_tables()
 
 async def on_shutdown():
     """Desliga a aplicação"""
