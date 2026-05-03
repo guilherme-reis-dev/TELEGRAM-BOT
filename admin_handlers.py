@@ -8,7 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from bot import get_db_pool, bot
 from admin import (
     is_admin, get_dashboard_stats, get_all_users, 
-    broadcast_message, update_user_plan, remove_user
+    broadcast_message, update_user_plan, remove_user, get_user_details
 )
 
 admin_router = Router(name="admin_router")
@@ -16,11 +16,15 @@ admin_router = Router(name="admin_router")
 class BroadcastState(StatesGroup):
     waiting_for_message = State()
 
+class ManageUserState(StatesGroup):
+    waiting_for_user_id = State()
+
 def get_admin_keyboard():
     """Retorna o teclado do painel de administração"""
     buttons = [
         [InlineKeyboardButton(text="📊 Dashboard", callback_data="admin_dashboard")],
         [InlineKeyboardButton(text="👥 Listar Clientes", callback_data="admin_list_users_0")],
+        [InlineKeyboardButton(text="⚙️ Gerenciar Cliente", callback_data="admin_manage_user")],
         [InlineKeyboardButton(text="📢 Enviar Broadcast", callback_data="admin_broadcast")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -172,3 +176,144 @@ async def process_broadcast_message(message: types.Message, state: FSMContext):
     )
     
     await msg_espera.edit_text(resultado, reply_markup=get_admin_keyboard(), parse_mode="Markdown")
+
+@admin_router.callback_query(F.data == "admin_manage_user")
+async def callback_manage_user_start(callback: CallbackQuery, state: FSMContext):
+    """Inicia o fluxo de gerenciar usuário"""
+    if not await is_admin(callback.from_user.id):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+
+    await state.set_state(ManageUserState.waiting_for_user_id)
+    
+    markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Cancelar", callback_data="admin_dashboard")]])
+    await callback.message.edit_text(
+        "⚙️ **Gerenciar Cliente**\n\nPor favor, digite o ID numérico do usuário (você pode ver o ID na Lista de Clientes).",
+        reply_markup=markup,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+@admin_router.message(ManageUserState.waiting_for_user_id)
+async def process_manage_user_id(message: types.Message, state: FSMContext):
+    """Recebe o ID do usuário e mostra o perfil com botões de ação"""
+    if not await is_admin(message.from_user.id):
+        return
+
+    try:
+        user_id = int(message.text.strip())
+    except ValueError:
+        await message.reply("❌ ID inválido. Por favor, digite apenas números.")
+        return
+
+    await state.clear()
+    
+    pool = get_db_pool()
+    user = await get_user_details(pool, user_id)
+    
+    if not user:
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 Voltar ao Painel", callback_data="admin_dashboard")]])
+        await message.answer("❌ Cliente não encontrado com este ID.", reply_markup=markup)
+        return
+
+    plano = user.get('plano') or 'Gratuito'
+    data_inscricao = user.get('data_inscricao')
+    data_str = data_inscricao.strftime("%d/%m/%Y %H:%M") if data_inscricao else "N/A"
+    
+    texto = (
+        "👤 **Perfil do Cliente**\n\n"
+        f"**ID:** `{user['id']}`\n"
+        f"**Nome:** {user['nome']}\n"
+        f"**Plano Atual:** {plano}\n"
+        f"**Cliente desde:** {data_str}\n"
+    )
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="🔄 Mudar Plano", callback_data=f"admin_change_plan_{user_id}"),
+            InlineKeyboardButton(text="❌ Remover", callback_data=f"admin_remove_user_{user_id}")
+        ],
+        [InlineKeyboardButton(text="🔙 Voltar ao Painel", callback_data="admin_dashboard")]
+    ]
+    
+    await message.answer(texto, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons), parse_mode="Markdown")
+
+@admin_router.callback_query(F.data.startswith("admin_change_plan_"))
+async def callback_change_plan(callback: CallbackQuery):
+    """Mostra as opções de plano para o usuário"""
+    if not await is_admin(callback.from_user.id):
+        return
+
+    user_id = int(callback.data.split("_")[-1])
+    
+    buttons = [
+        [InlineKeyboardButton(text="Gratuito", callback_data=f"admin_set_plan_{user_id}_gratuito")],
+        [
+            InlineKeyboardButton(text="Semanal", callback_data=f"admin_set_plan_{user_id}_semanal"),
+            InlineKeyboardButton(text="Semestral", callback_data=f"admin_set_plan_{user_id}_semestral")
+        ],
+        [InlineKeyboardButton(text="Anual", callback_data=f"admin_set_plan_{user_id}_anual")],
+        [InlineKeyboardButton(text="🔙 Cancelar", callback_data="admin_dashboard")]
+    ]
+    
+    await callback.message.edit_text(
+        "🔄 **Alterar Plano**\n\nSelecione o novo plano para o cliente:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="Markdown"
+    )
+
+@admin_router.callback_query(F.data.startswith("admin_set_plan_"))
+async def callback_set_plan(callback: CallbackQuery):
+    """Aplica o novo plano ao usuário"""
+    if not await is_admin(callback.from_user.id):
+        return
+
+    parts = callback.data.split("_")
+    user_id = int(parts[3])
+    novo_plano = parts[4]
+    
+    if novo_plano == "gratuito":
+        novo_plano = None # None significa sem plano na tabela
+        
+    pool = get_db_pool()
+    sucesso = await update_user_plan(pool, user_id, novo_plano)
+    
+    if sucesso:
+        plano_nome = "Gratuito" if novo_plano is None else novo_plano.capitalize()
+        await callback.message.edit_text(
+            f"✅ **Sucesso!**\n\nO plano do cliente foi atualizado para **{plano_nome}**.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.edit_text(
+            "❌ **Erro!**\n\nNão foi possível atualizar o plano do cliente.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+    await callback.answer()
+
+@admin_router.callback_query(F.data.startswith("admin_remove_user_"))
+async def callback_remove_user(callback: CallbackQuery):
+    """Remove o usuário do banco"""
+    if not await is_admin(callback.from_user.id):
+        return
+
+    user_id = int(callback.data.split("_")[-1])
+    pool = get_db_pool()
+    
+    sucesso = await remove_user(pool, user_id)
+    
+    if sucesso:
+        await callback.message.edit_text(
+            "✅ **Sucesso!**\n\nO cliente foi removido permanentemente.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+    else:
+        await callback.message.edit_text(
+            "❌ **Erro!**\n\nNão foi possível remover o cliente.",
+            reply_markup=get_admin_keyboard(),
+            parse_mode="Markdown"
+        )
+    await callback.answer()
