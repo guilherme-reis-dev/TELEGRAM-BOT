@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from bot import dp, bot, init_db_pool, close_db_pool, logger
+from admin_handlers import admin_router
 
 async def init_db_tables():
     """Cria tabelas se não existirem"""
@@ -72,6 +73,8 @@ async def main():
         """Handler do comando /start"""
         await register_user(message.from_user.id, message.from_user.first_name or "Usuário")
         await message.reply(f"👋 Bem-vindo, {message.from_user.first_name}!\n\nVocê foi registrado com sucesso!")
+        
+    dp.include_router(admin_router)
     
     try:
         await on_startup()
